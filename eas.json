@@ -1,0 +1,53 @@
+{
+  "cli": {
+    "version": ">= 5.0.0",
+    "promptToConfigurePushNotifications": false
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m1"
+      },
+      "android": {
+        "resourceClass": "medium"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "resourceClass": "medium",
+        "env": {
+          "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+        }
+      },
+      "ios": {
+        "resourceClass": "m1"
+      }
+    },
+    "distribution": {
+      "distribution": "store",
+      "android": {
+        "buildType": "apk",
+        "resourceClass": "large",
+        "gradleCommand": ":app:assembleRelease",
+        "env": {
+          "EXPO_USE_METRO_WORKSPACE_ROOT": "1"
+        }
+      },
+      "ios": {
+        "resourceClass": "m1"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "serviceAccount": "@local ~/gc_keys.json",
+        "track": "internal"
+      }
+    }
+  }
+}
