@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,32 +7,136 @@ import {
   ScrollView,
   Switch,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { ScreenContainer } from '@/components/screen-container';
 import { useColors } from '@/hooks/use-colors';
+import { tavilyService } from '@/lib/tavily-service';
+import { vectorDbService } from '@/lib/vector-db-service';
+import { llmService } from '@/lib/llm-service';
+import { useChat } from '@/lib/chat-context';
+import { useMemoryManagement } from '@/hooks/use-memory-management';
 
 export default function SettingsScreen() {
   const colors = useColors();
+  const { clearMessages } = useChat();
+  const { clearChatAndMemory, getMemoryStatus } = useMemoryManagement();
+  
   const [tavilyApiKey, setTavilyApiKey] = useState('');
   const [gpuAcceleration, setGpuAcceleration] = useState(true);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [dbStats, setDbStats] = useState({ documentCount: 0, totalSize: 0 });
+  const [tavilyStatus, setTavilyStatus] = useState({ isConfigured: false });
 
-  const handleSaveSettings = () => {
-    // TODO: Save to secure storage
-    Alert.alert('Success', 'Settings saved successfully');
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      await tavilyService.initialize();
+      const status = tavilyService.getStatus();
+      setTavilyStatus(status);
+      
+      const stats = vectorDbService.getStats();
+      setDbStats(stats);
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    }
   };
 
-  const handleClearData = () => {
+  const handleSaveSettings = async () => {
+    setIsSaving(true);
+    try {
+      if (tavilyApiKey.trim()) {
+        await tavilyService.setApiKey(tavilyApiKey);
+        Alert.alert('Success', 'Tavily API key saved securely');
+        setTavilyApiKey('');
+        setShowApiKey(false);
+        await loadSettings();
+      } else {
+        Alert.alert('Info', 'No API key provided');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to save API key';
+      Alert.alert('Error', errorMessage);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleClearApiKey = async () => {
     Alert.alert(
-      'Clear All Data',
-      'This will delete all conversations and documents. This action cannot be undone.',
+      'Clear API Key',
+      'This will disable web search functionality.',
+      [
+        { text: 'Cancel', onPress: () => {} },
+        {
+          text: 'Clear',
+          onPress: async () => {
+            try {
+              await tavilyService.clearApiKey();
+              Alert.alert('Success', 'API key cleared');
+              await loadSettings();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to clear API key');
+            }
+          },
+          style: 'destructive',
+        },
+      ]
+    );
+  };
+
+  const handleClearDocuments = async () => {
+    Alert.alert(
+      'Clear Documents',
+      'This will delete all uploaded documents from your knowledge base.',
       [
         { text: 'Cancel', onPress: () => {} },
         {
           text: 'Delete',
-          onPress: () => {
-            // TODO: Clear all data
-            Alert.alert('Success', 'All data cleared');
+          onPress: async () => {
+            try {
+              setIsClearing(true);
+              await vectorDbService.clearAll();
+              Alert.alert('Success', 'All documents cleared');
+              await loadSettings();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to clear documents');
+            } finally {
+              setIsClearing(false);
+            }
+          },
+          style: 'destructive',
+        },
+      ]
+    );
+  };
+
+  const handleClearAllData = async () => {
+    Alert.alert(
+      'Clear All Data',
+      'This will delete all conversations, documents, and settings. This action cannot be undone.',
+      [
+        { text: 'Cancel', onPress: () => {} },
+        {
+          text: 'Delete Everything',
+          onPress: async () => {
+            try {
+              setIsClearing(true);
+              await clearChatAndMemory();
+              await vectorDbService.clearAll();
+              await tavilyService.clearApiKey();
+              Alert.alert('Success', 'All data cleared');
+              await loadSettings();
+            } catch (error) {
+              Alert.alert('Error', 'Failed to clear data');
+            } finally {
+              setIsClearing(false);
+            }
           },
           style: 'destructive',
         },
@@ -57,7 +161,7 @@ export default function SettingsScreen() {
             className="text-lg font-semibold mb-3"
             style={{ color: colors.foreground }}
           >
-            API Configuration
+            Web Search (Tavily API)
           </Text>
 
           <View
@@ -67,47 +171,127 @@ export default function SettingsScreen() {
               borderColor: colors.border,
             }}
           >
-            <Text
-              className="text-sm font-semibold mb-2"
-              style={{ color: colors.foreground }}
-            >
-              Tavily API Key
-            </Text>
+            <View className="mb-3 flex-row items-center justify-between">
+              <View>
+                <Text
+                  className="text-sm font-semibold"
+                  style={{ color: colors.foreground }}
+                >
+                  API Key Status
+                </Text>
+              </View>
+              <View
+                className="px-3 py-1 rounded-full"
+                style={{
+                  backgroundColor: tavilyStatus.isConfigured
+                    ? colors.success
+                    : colors.error,
+                }}
+              >
+                <Text
+                  className="text-xs font-semibold"
+                  style={{ color: colors.background }}
+                >
+                  {tavilyStatus.isConfigured ? '✓ Active' : '✗ Not Set'}
+                </Text>
+              </View>
+            </View>
+
             <Text
               className="text-xs mb-3"
               style={{ color: colors.muted }}
             >
-              Required for real-time web search. Get your free key at tavily.com
+              Get your free API key at{' '}
+              <Text style={{ color: colors.primary }}>tavily.com</Text>
             </Text>
 
-            <View className="flex-row items-center mb-3 border rounded-lg"
-              style={{
-                backgroundColor: colors.background,
-                borderColor: colors.border,
-              }}
-            >
-              <TextInput
-                value={tavilyApiKey}
-                onChangeText={setTavilyApiKey}
-                placeholder="tvly-..."
-                placeholderTextColor={colors.muted}
-                secureTextEntry={!showApiKey}
-                style={{
-                  flex: 1,
-                  color: colors.foreground,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                }}
-              />
+            {tavilyStatus.isConfigured ? (
               <Pressable
-                onPress={() => setShowApiKey(!showApiKey)}
-                style={{ paddingHorizontal: 12 }}
+                onPress={handleClearApiKey}
+                style={({ pressed }) => [
+                  {
+                    backgroundColor: colors.error,
+                    borderRadius: 6,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
               >
-                <Text style={{ color: colors.primary }}>
-                  {showApiKey ? 'Hide' : 'Show'}
+                <Text
+                  style={{
+                    color: colors.background,
+                    fontWeight: '600',
+                    textAlign: 'center',
+                    fontSize: 12,
+                  }}
+                >
+                  Remove API Key
                 </Text>
               </Pressable>
-            </View>
+            ) : (
+              <View>
+                <View
+                  className="flex-row items-center mb-3 border rounded-lg"
+                  style={{
+                    backgroundColor: colors.background,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <TextInput
+                    value={tavilyApiKey}
+                    onChangeText={setTavilyApiKey}
+                    placeholder="tvly-..."
+                    placeholderTextColor={colors.muted}
+                    secureTextEntry={!showApiKey}
+                    style={{
+                      flex: 1,
+                      color: colors.foreground,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                    }}
+                  />
+                  <Pressable
+                    onPress={() => setShowApiKey(!showApiKey)}
+                    style={{ paddingHorizontal: 12 }}
+                  >
+                    <Text style={{ color: colors.primary, fontSize: 12 }}>
+                      {showApiKey ? 'Hide' : 'Show'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  onPress={handleSaveSettings}
+                  disabled={isSaving || !tavilyApiKey.trim()}
+                  style={({ pressed }) => [
+                    {
+                      backgroundColor: tavilyApiKey.trim()
+                        ? colors.primary
+                        : colors.border,
+                      borderRadius: 6,
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      opacity: pressed ? 0.8 : 1,
+                    },
+                  ]}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator color={colors.background} size="small" />
+                  ) : (
+                    <Text
+                      style={{
+                        color: colors.background,
+                        fontWeight: '600',
+                        textAlign: 'center',
+                      }}
+                    >
+                      Save API Key
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            )}
           </View>
         </View>
 
@@ -139,7 +323,7 @@ export default function SettingsScreen() {
                   className="text-xs"
                   style={{ color: colors.muted }}
                 >
-                  Enable Vulkan/Metal for faster inference
+                  Vulkan/Metal for faster inference
                 </Text>
               </View>
               <Switch
@@ -163,26 +347,26 @@ export default function SettingsScreen() {
                 style={{ backgroundColor: colors.background }}
               >
                 <Text style={{ color: colors.foreground }}>
-                  Llama-3.2-3B-Instruct (4-bit)
+                  Llama-3.2-1B-Instruct (4-bit)
                 </Text>
                 <Text
                   className="text-xs mt-1"
                   style={{ color: colors.muted }}
                 >
-                  ~3GB • Optimized for mobile
+                  ~1.2GB • Optimized for 4GB RAM devices
                 </Text>
               </View>
             </View>
           </View>
         </View>
 
-        {/* Appearance Section */}
+        {/* Knowledge Base Section */}
         <View className="mb-6">
           <Text
             className="text-lg font-semibold mb-3"
             style={{ color: colors.foreground }}
           >
-            Appearance
+            Knowledge Base
           </Text>
 
           <View
@@ -192,12 +376,55 @@ export default function SettingsScreen() {
               borderColor: colors.border,
             }}
           >
-            <Text
-              className="text-sm"
-              style={{ color: colors.muted }}
-            >
-              Theme: Dark (System Default)
-            </Text>
+            <View className="mb-4">
+              <Text
+                className="text-sm font-semibold mb-2"
+                style={{ color: colors.foreground }}
+              >
+                Documents
+              </Text>
+              <View
+                className="rounded-lg p-3"
+                style={{ backgroundColor: colors.background }}
+              >
+                <Text style={{ color: colors.foreground }}>
+                  {dbStats.documentCount} document{dbStats.documentCount !== 1 ? 's' : ''}
+                </Text>
+                <Text
+                  className="text-xs mt-1"
+                  style={{ color: colors.muted }}
+                >
+                  {(dbStats.totalSize / 1024 / 1024).toFixed(2)} MB total
+                </Text>
+              </View>
+            </View>
+
+            {dbStats.documentCount > 0 && (
+              <Pressable
+                onPress={handleClearDocuments}
+                disabled={isClearing}
+                style={({ pressed }) => [
+                  {
+                    backgroundColor: colors.warning,
+                    borderRadius: 6,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    opacity: pressed ? 0.8 : 1,
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: colors.background,
+                    fontWeight: '600',
+                    textAlign: 'center',
+                    fontSize: 12,
+                  }}
+                >
+                  Clear Documents
+                </Text>
+              </Pressable>
+            )}
           </View>
         </View>
 
@@ -238,7 +465,7 @@ export default function SettingsScreen() {
               className="text-xs leading-relaxed"
               style={{ color: colors.muted }}
             >
-              Your private AI assistant. All data stays on your device. No cloud sync, no tracking.
+              Your private AI assistant. All data stays on your device. No cloud sync, no tracking, no telemetry.
             </Text>
           </View>
         </View>
@@ -253,53 +480,33 @@ export default function SettingsScreen() {
           </Text>
 
           <Pressable
-            onPress={handleClearData}
+            onPress={handleClearAllData}
+            disabled={isClearing}
             style={({ pressed }) => [
               {
                 backgroundColor: colors.error,
                 borderRadius: 8,
                 paddingVertical: 12,
                 paddingHorizontal: 16,
-                opacity: pressed ? 0.8 : 1,
+                opacity: pressed || isClearing ? 0.8 : 1,
               },
             ]}
           >
-            <Text
-              style={{
-                color: colors.background,
-                fontWeight: '600',
-                textAlign: 'center',
-              }}
-            >
-              Clear All Data
-            </Text>
+            {isClearing ? (
+              <ActivityIndicator color={colors.background} size="small" />
+            ) : (
+              <Text
+                style={{
+                  color: colors.background,
+                  fontWeight: '600',
+                  textAlign: 'center',
+                }}
+              >
+                Clear All Data
+              </Text>
+            )}
           </Pressable>
         </View>
-
-        {/* Save Button */}
-        <Pressable
-          onPress={handleSaveSettings}
-          style={({ pressed }) => [
-            {
-              backgroundColor: colors.primary,
-              borderRadius: 8,
-              paddingVertical: 12,
-              paddingHorizontal: 16,
-              marginBottom: 16,
-              opacity: pressed ? 0.8 : 1,
-            },
-          ]}
-        >
-          <Text
-            style={{
-              color: colors.background,
-              fontWeight: '600',
-              textAlign: 'center',
-            }}
-          >
-            Save Settings
-          </Text>
-        </Pressable>
       </ScrollView>
     </ScreenContainer>
   );

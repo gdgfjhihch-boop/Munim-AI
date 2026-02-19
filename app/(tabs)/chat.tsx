@@ -8,21 +8,27 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { ScreenContainer } from '@/components/screen-container';
 import { useChat } from '@/lib/chat-context';
 import { Message } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useColors } from '@/hooks/use-colors';
+import { llmService } from '@/lib/llm-service';
+import { tavilyService } from '@/lib/tavily-service';
+import { vectorDbService } from '@/lib/vector-db-service';
+import { embeddingService } from '@/lib/embedding-service';
+import { routeQuery } from '@/lib/router';
 
 export default function ChatScreen() {
   const colors = useColors();
-  const { state, addMessage, setLoading } = useChat();
+  const { state, addMessage, setLoading, toggleWebSearch } = useChat();
   const [inputText, setInputText] = useState('');
   const scrollViewRef = useRef<ScrollView>(null);
+  const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
-    // Auto-scroll to bottom when messages change
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
@@ -31,7 +37,6 @@ export default function ChatScreen() {
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
 
-    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -42,18 +47,89 @@ export default function ChatScreen() {
     addMessage(userMessage);
     setInputText('');
     setLoading(true);
+    setError(undefined);
 
-    // Simulate AI response (will be replaced with actual LLM integration)
-    setTimeout(() => {
+    try {
+      await llmService.initialize();
+      await vectorDbService.initialize();
+      await tavilyService.initialize();
+
+      const documents = await vectorDbService.getAllDocuments();
+      const decision = routeQuery(
+        inputText,
+        documents.length > 0,
+        state.webSearchEnabled && tavilyService.isConfigured()
+      );
+
+      let context = '';
+      let sources: string[] = [];
+
+      if (decision.type === 'rag' && documents.length > 0) {
+        try {
+          const queryEmbedding = await embeddingService.embed(inputText);
+          const results = await vectorDbService.searchSimilar(
+            queryEmbedding.embedding,
+            3,
+            0.4
+          );
+          if (results.length > 0) {
+            context = results
+              .map(
+                (r) =>
+                  `Document: ${r.document.name}\nContent: ${r.document.content.substring(0, 200)}...`
+              )
+              .join('\n\n');
+            sources = results.map((r) => r.document.name);
+          }
+        } catch (err) {
+          console.error('RAG search failed:', err);
+        }
+      } else if (decision.type === 'web' && state.webSearchEnabled) {
+        try {
+          const searchResults = await tavilyService.search(inputText);
+          context = searchResults
+            .map((r) => `${r.title}\n${r.snippet}`)
+            .join('\n\n');
+          sources = searchResults.map((r) => r.url);
+        } catch (err) {
+          console.error('Web search failed:', err);
+          setError('Web search failed. Please check your API key.');
+        }
+      }
+
+      const systemPrompt = `You are GENESIS-1, a private AI assistant running entirely on the user's device.
+
+Your core principles:
+1. Privacy First: All conversations and data stay on the user's device.
+2. Honesty: Be transparent about your limitations.
+3. Helpfulness: Provide clear, concise, and actionable responses.
+4. Respect: Treat the user with respect and acknowledge their concerns.
+
+${context ? `Context from knowledge base:\n${context}` : ''}`;
+
+      const response = await llmService.generateResponse(
+        [...state.messages, userMessage],
+        systemPrompt
+      );
+
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'This is a placeholder response. LLM integration coming soon.',
+        content:
+          response ||
+          'I am GENESIS-1, your private AI assistant. How can I help you today?',
         timestamp: Date.now(),
+        sources: sources.length > 0 ? sources : undefined,
       };
       addMessage(aiMessage);
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMessage);
+      console.error('Chat error:', err);
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   return (
@@ -73,18 +149,36 @@ export default function ChatScreen() {
             paddingVertical: 12,
           }}
         >
-          <Text
-            className="text-2xl font-bold"
-            style={{ color: colors.foreground }}
-          >
-            GENESIS-1
-          </Text>
-          <Text
-            className="text-sm"
-            style={{ color: colors.muted }}
-          >
-            Your Private AI Assistant
-          </Text>
+          <View className="mb-3">
+            <Text
+              className="text-2xl font-bold"
+              style={{ color: colors.foreground }}
+            >
+              GENESIS-1
+            </Text>
+            <Text className="text-sm" style={{ color: colors.muted }}>
+              Your Private AI Assistant
+            </Text>
+          </View>
+          <View className="flex-row items-center justify-between">
+            <View className="flex-row items-center gap-2">
+              <Text className="text-xs" style={{ color: colors.muted }}>
+                Web Search
+              </Text>
+              <Switch
+                value={state.webSearchEnabled}
+                onValueChange={toggleWebSearch}
+                trackColor={{ false: colors.border, true: colors.primary }}
+              />
+            </View>
+            <Text className="text-xs" style={{ color: colors.muted }}>
+              {state.webSearchEnabled
+                ? tavilyService.isConfigured()
+                  ? '🟢 Ready'
+                  : '🔴 No API Key'
+                : '⚪ Off'}
+            </Text>
+          </View>
         </View>
 
         {/* Messages */}
@@ -113,6 +207,17 @@ export default function ChatScreen() {
             state.messages.map((message) => (
               <MessageBubble key={message.id} message={message} />
             ))
+          )}
+
+          {error && (
+            <View
+              className="rounded-lg p-3 mb-3"
+              style={{ backgroundColor: colors.error }}
+            >
+              <Text style={{ color: colors.background, fontSize: 12 }}>
+                {error}
+              </Text>
+            </View>
           )}
 
           {state.isLoading && (
@@ -155,7 +260,9 @@ export default function ChatScreen() {
             disabled={!inputText.trim() || state.isLoading}
             style={({ pressed }) => [
               {
-                backgroundColor: inputText.trim() ? colors.primary : colors.border,
+                backgroundColor: inputText.trim()
+                  ? colors.primary
+                  : colors.border,
                 borderRadius: 8,
                 paddingHorizontal: 16,
                 paddingVertical: 8,
@@ -186,10 +293,7 @@ function MessageBubble({ message }: { message: Message }) {
 
   return (
     <View
-      className={cn(
-        'flex-row',
-        isUser ? 'justify-end' : 'justify-start'
-      )}
+      className={cn('flex-row', isUser ? 'justify-end' : 'justify-start')}
     >
       <View
         className="rounded-lg p-3 max-w-xs"

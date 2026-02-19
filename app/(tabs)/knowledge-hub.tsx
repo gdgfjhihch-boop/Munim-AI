@@ -1,49 +1,141 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   FlatList,
   Pressable,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { ScreenContainer } from '@/components/screen-container';
 import { useColors } from '@/hooks/use-colors';
 import { Document } from '@/lib/types';
-
-const mockDocuments: Document[] = [
-  {
-    id: '1',
-    name: 'Project Proposal.pdf',
-    content: 'Sample content...',
-    size: 2048000,
-    uploadedAt: Date.now() - 86400000,
-    embeddingStatus: 'completed',
-  },
-  {
-    id: '2',
-    name: 'Meeting Notes.txt',
-    content: 'Sample content...',
-    size: 512000,
-    uploadedAt: Date.now() - 172800000,
-    embeddingStatus: 'completed',
-  },
-];
+import { vectorDbService } from '@/lib/vector-db-service';
+import { embeddingService } from '@/lib/embedding-service';
 
 export default function KnowledgeHubScreen() {
   const colors = useColors();
-  const [documents, setDocuments] = useState<Document[]>(mockDocuments);
+  const [documents, setDocuments] = useState<Document[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleUploadDocument = () => {
-    setIsUploading(true);
-    // Simulate upload
-    setTimeout(() => {
+  useEffect(() => {
+    loadDocuments();
+  }, []);
+
+  const loadDocuments = async () => {
+    try {
+      setIsLoading(true);
+      await vectorDbService.initialize();
+      const docs = await vectorDbService.getAllDocuments();
+      setDocuments(docs);
+    } catch (error) {
+      console.error('Failed to load documents:', error);
+      Alert.alert('Error', 'Failed to load documents');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUploadDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'text/plain', 'text/markdown'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets[0];
+      if (!file.uri) {
+        Alert.alert('Error', 'Failed to get file');
+        return;
+      }
+
+      setIsUploading(true);
+
+      let content = '';
+      try {
+        content = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+      } catch {
+        content = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+
+      if (!content) {
+        Alert.alert('Error', 'File is empty');
+        setIsUploading(false);
+        return;
+      }
+
+      const fileInfo = await FileSystem.getInfoAsync(file.uri);
+      const size = (fileInfo as any).size || content.length || 0;
+
+      const doc: Document = {
+        id: Date.now().toString(),
+        name: file.name,
+        content: content.substring(0, 10000),
+        size,
+        uploadedAt: Date.now(),
+        embeddingStatus: 'pending',
+      };
+
+      setDocuments([...documents, doc]);
+
+      try {
+        await embeddingService.initialize();
+        const embedding = await embeddingService.embedDocument(doc.name, doc.content);
+
+        await vectorDbService.storeDocument(doc, embedding.embedding);
+
+        const updatedDoc = { ...doc, embeddingStatus: 'completed' as const };
+        setDocuments((docs) =>
+          docs.map((d) => (d.id === doc.id ? updatedDoc : d))
+        );
+
+        Alert.alert('Success', `Document "${file.name}" uploaded and embedded`);
+      } catch (error) {
+        console.error('Embedding failed:', error);
+        const failedDoc = { ...doc, embeddingStatus: 'failed' as const };
+        setDocuments((docs) =>
+          docs.map((d) => (d.id === doc.id ? failedDoc : d))
+        );
+        Alert.alert('Warning', 'Document uploaded but embedding failed');
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+      Alert.alert('Error', 'Failed to upload document');
+    } finally {
       setIsUploading(false);
-    }, 2000);
+    }
   };
 
   const handleDeleteDocument = (id: string) => {
-    setDocuments(documents.filter((doc) => doc.id !== id));
+    Alert.alert(
+      'Delete Document',
+      'Are you sure you want to delete this document?',
+      [
+        { text: 'Cancel', onPress: () => {} },
+        {
+          text: 'Delete',
+          onPress: async () => {
+            try {
+              await vectorDbService.deleteDocument(id);
+              setDocuments(documents.filter((doc) => doc.id !== id));
+              Alert.alert('Success', 'Document deleted');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to delete document');
+            }
+          },
+          style: 'destructive',
+        },
+      ]
+    );
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -134,6 +226,14 @@ export default function KnowledgeHubScreen() {
       </Pressable>
     </View>
   );
+
+  if (isLoading) {
+    return (
+      <ScreenContainer className="flex-1 items-center justify-center">
+        <ActivityIndicator color={colors.primary} size="large" />
+      </ScreenContainer>
+    );
+  }
 
   return (
     <ScreenContainer className="flex-1 p-4">
