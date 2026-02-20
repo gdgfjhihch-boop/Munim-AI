@@ -77,7 +77,8 @@ export default function SettingsScreen() {
               await tavilyService.clearApiKey();
               Alert.alert('Success', 'API key cleared');
               await loadSettings();
-            } catch (error) {
+            } catch (e) {
+              console.error('Failed to clear API key:', e);
               Alert.alert('Error', 'Failed to clear API key');
             }
           },
@@ -101,7 +102,8 @@ export default function SettingsScreen() {
               await vectorDbService.clearAll();
               Alert.alert('Success', 'All documents cleared');
               await loadSettings();
-            } catch (error) {
+            } catch (e) {
+              console.error('Failed to clear documents:', e);
               Alert.alert('Error', 'Failed to clear documents');
             } finally {
               setIsClearing(false);
@@ -129,7 +131,8 @@ export default function SettingsScreen() {
               await tavilyService.clearApiKey();
               Alert.alert('Success', 'All data cleared');
               await loadSettings();
-            } catch (error) {
+            } catch (e) {
+              console.error('Failed to clear data:', e);
               Alert.alert('Error', 'Failed to clear data');
             } finally {
               setIsClearing(false);

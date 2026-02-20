@@ -128,7 +128,8 @@ export default function KnowledgeHubScreen() {
               await vectorDbService.deleteDocument(id);
               setDocuments(documents.filter((doc) => doc.id !== id));
               Alert.alert('Success', 'Document deleted');
-            } catch (error) {
+            } catch (e) {
+              console.error('Failed to delete document:', e);
               Alert.alert('Error', 'Failed to delete document');
             }
           },
