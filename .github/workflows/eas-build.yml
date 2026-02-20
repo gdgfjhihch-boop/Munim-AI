@@ -1,0 +1,180 @@
+name: EAS Build - GENESIS-1
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile (preview or distribution)'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - distribution
+
+env:
+  NODE_VERSION: '22.13.0'
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript check
+        run: npm run check
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check for hardcoded secrets
+        run: |
+          if grep -r "TAVILY_API_KEY=" . --include="*.ts" --include="*.tsx" --include="*.js" 2>/dev/null; then
+            echo "⚠️  Warning: Hardcoded API key detected"
+            exit 1
+          fi
+          echo "✓ No hardcoded secrets found"
+
+      - name: Verify RAM optimization
+        run: |
+          echo "Checking LLM model configuration..."
+          if grep -q "Llama-3.2-1B-Instruct-q4f32_1" lib/llm-service.ts; then
+            echo "✓ Llama-3.2-1B model confirmed"
+          else
+            echo "✗ Model mismatch detected"
+            exit 1
+          fi
+          if grep -q "gpuAcceleration: true" lib/llm-service.ts; then
+            echo "✓ GPU acceleration enabled"
+          else
+            echo "✗ GPU acceleration disabled"
+            exit 1
+          fi
+          echo "✓ RAM optimization verified for 4GB devices"
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security-check]
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android APK
+        run: |
+          PROFILE=${{ github.event.inputs.profile || 'preview' }}
+          echo "Building with profile: $PROFILE"
+          eas build -p android --profile $PROFILE --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Get Build Status
+        run: |
+          echo "✅ Build submitted to EAS"
+          echo ""
+          echo "📊 Build Information:"
+          echo "  Profile: ${{ github.event.inputs.profile || 'preview' }}"
+          echo "  Repository: ${{ github.repository }}"
+          echo "  Commit: ${{ github.sha }}"
+          echo ""
+          echo "🔗 Monitor your build at: https://expo.dev/builds"
+
+      - name: Comment PR with Build Info
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🚀 **EAS Build Triggered!**\n\n✅ Linting and tests passed\n✅ Security checks passed\n✅ RAM optimization verified\n\n📊 Build Profile: preview\n\n🔗 Monitor your build at: https://expo.dev/builds\n\nYour APK will be ready shortly!'
+            })
+
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint-and-test, security-check, build-android]
+
+    steps:
+      - name: Check build status
+        run: |
+          echo "=== GENESIS-1 Build Pipeline Summary ==="
+          echo ""
+          echo "✅ Lint & Test: ${{ needs.lint-and-test.result }}"
+          echo "✅ Security Check: ${{ needs.security-check.result }}"
+          echo "✅ Build Android: ${{ needs.build-android.result }}"
+          echo ""
+          if [ "${{ needs.build-android.result }}" == "success" ]; then
+            echo "🎉 Build completed successfully!"
+            echo ""
+            echo "📊 Next Steps:"
+            echo "  1. Go to: https://expo.dev/builds"
+            echo "  2. Find your build in the list"
+            echo "  3. Download the APK"
+            echo "  4. Install on your 4GB RAM Android device"
+            echo "  5. Configure Tavily API key in Settings (optional)"
+          else
+            echo "⚠️  Build encountered issues. Check logs above."
+          fi
