@@ -31,8 +31,8 @@ export default function KnowledgeHubScreen() {
       await vectorDbService.initialize();
       const docs = await vectorDbService.getAllDocuments();
       setDocuments(docs);
-    } catch (error) {
-      console.error('Failed to load documents:', error);
+    } catch (e) {
+      console.error('Failed to load documents:', e);
       Alert.alert('Error', 'Failed to load documents');
     } finally {
       setIsLoading(false);
@@ -99,16 +99,16 @@ export default function KnowledgeHubScreen() {
         );
 
         Alert.alert('Success', `Document "${file.name}" uploaded and embedded`);
-      } catch (error) {
-        console.error('Embedding failed:', error);
+      } catch (e) {
+        console.error('Embedding failed:', e);
         const failedDoc = { ...doc, embeddingStatus: 'failed' as const };
         setDocuments((docs) =>
           docs.map((d) => (d.id === doc.id ? failedDoc : d))
         );
         Alert.alert('Warning', 'Document uploaded but embedding failed');
       }
-    } catch (error) {
-      console.error('Upload failed:', error);
+    } catch (e) {
+      console.error('Upload failed:', e);
       Alert.alert('Error', 'Failed to upload document');
     } finally {
       setIsUploading(false);
@@ -249,7 +249,7 @@ export default function KnowledgeHubScreen() {
           className="text-sm"
           style={{ color: colors.muted }}
         >
-          Upload documents to enhance your AI assistant's knowledge
+          Upload documents to enhance your AI assistant&apos;s knowledge
         </Text>
       </View>
 

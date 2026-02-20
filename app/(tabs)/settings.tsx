@@ -13,14 +13,11 @@ import { ScreenContainer } from '@/components/screen-container';
 import { useColors } from '@/hooks/use-colors';
 import { tavilyService } from '@/lib/tavily-service';
 import { vectorDbService } from '@/lib/vector-db-service';
-import { llmService } from '@/lib/llm-service';
-import { useChat } from '@/lib/chat-context';
 import { useMemoryManagement } from '@/hooks/use-memory-management';
 
 export default function SettingsScreen() {
   const colors = useColors();
-  const { clearMessages } = useChat();
-  const { clearChatAndMemory, getMemoryStatus } = useMemoryManagement();
+  const { clearChatAndMemory } = useMemoryManagement();
   
   const [tavilyApiKey, setTavilyApiKey] = useState('');
   const [gpuAcceleration, setGpuAcceleration] = useState(true);
@@ -42,8 +39,8 @@ export default function SettingsScreen() {
       
       const stats = vectorDbService.getStats();
       setDbStats(stats);
-    } catch (error) {
-      console.error('Failed to load settings:', error);
+    } catch (e) {
+      console.error('Failed to load settings:', e);
     }
   };
 
